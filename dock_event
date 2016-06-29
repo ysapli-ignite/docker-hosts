@@ -1,0 +1,70 @@
+#!/bin/bash
+#
+# --------------------------------------------------------------
+# This script consumes Docker's start, stop and die events to
+# add/remove containers to/from /etc/hosts file so that they can
+# automatically be addressed by their hostnames.
+#
+# Needs to be run as root
+# --------------------------------------------------------------
+# TODO Can be set up as a service so it's easier to start/stop
+# and check its status.
+#
+
+_hosts_file="/etc/hosts"
+
+function listenDockerEvents
+{
+    while read event
+    do
+        _etype=`echo $event | cut -d ' ' -f 3`
+        _cid=`echo $event | cut -d ' ' -f 4`
+        _cid=${_cid:0:12}
+        _cip=`docker inspect --format '{{ .NetworkSettings.IPAddress }}' $_cid`
+        if [ "$_etype" == "start" ]; then
+            addHost $_cid $_cip
+        elif [[ "$_etype" == "stop" || "$_etype" == "die" ]]; then
+            removeHost $_cid
+        fi
+    done < <(docker events --filter event=start --filter event=die --filter event=stop)
+}
+
+function addHost()
+{
+    if [ "$#" != "2" ]; then
+      echo "Usage: addHost <hostname> <container_ip>" >&2
+    fi
+    _hostname="$1"
+    _cip="$2"
+    _line="$_cip\t$_hostname"
+    grep -q $_hostname $_hosts_file && sed -i "s/.*$_hostname/$_line/" $_hosts_file || echo -e "$_line" >> $_hosts_file
+}
+
+function removeHost()
+{
+    if [ "$#" != "1" ]; then
+      echo "Usage: removeHost <hostname>" >&2
+    fi
+    _hostname="$1"
+    sed -i "/$_hostname/d" $_hosts_file
+}
+
+function testAddHostWhenNotExisting
+{
+    _hname="ec89b7a8e6af"
+    _cip="172.17.0.3"
+    _hosts_file="h"
+    addHost $_hname $_cip
+    _hosts_file="hosts"
+}
+
+function testAddHostWhenExisting
+{
+    _hname="ec89b7a8e6af"
+    _cip="172.17.0.4"
+    _hosts_file="h"
+    addHost $_hname $_cip
+    _hosts_file="hosts"
+}
+
+listenDockerEvents &
